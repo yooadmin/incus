@@ -42,8 +42,8 @@ jobs:
 
       - name: Create missing include directory
         run: |
-          sudo mkdir -p /usr/local/include
-          sudo chmod 755 /usr/local/include
+          mkdir -p /usr/local/include
+          chmod 755 /usr/local/include
 
       - name: Install dependencies (cowsql/raft)
         run: |
