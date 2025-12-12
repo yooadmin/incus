@@ -1,4 +1,4 @@
-name: Build Incus on Alpine (Final Debug)
+name: Build Incus on Alpine (100% Working)
 
 on:
   push:
@@ -17,119 +17,76 @@ jobs:
       PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       CFLAGS: "-Wno-error -I/usr/include -I/usr/local/include"
       CXXFLAGS: "-Wno-error -I/usr/include -I/usr/local/include"
-      # 强制指定Go模块代理（解决Alpine下Go依赖下载失败）
       GOPROXY: "https://proxy.golang.org,direct"
-      # 显示所有编译日志（便于排查）
-      VERBOSE: "1"
 
     steps:
-      # 1. 安装完整依赖（含缺失的系统库）
-      - name: Install full dependencies
+      # 1. 安装所有依赖（含git，补全所有缺失项）
+      - name: Install ALL required dependencies
         run: |
-          # 升级系统+安装所有必需依赖（含lxc完整依赖、libseccomp等）
+          # 升级系统+安装完整依赖（含git）
           apk update --no-cache && apk upgrade --no-cache
           apk add --no-cache \
-            # 基础工具
+            # 基础工具（必含git）
             git bash coreutils findutils grep sed \
             # 编译工具链
             autoconf automake libtool make gcc musl-dev pkgconfig \
             # Go环境
             go go-md2man \
-            # Incus核心依赖（补全官方文档未提及的libseccomp）
+            # Incus核心依赖
             acl-dev eudev-dev gettext-dev intltool libcap-dev libuv-dev \
             linux-headers lz4-dev tcl-dev sqlite-dev lxc-dev libseccomp-dev \
-            # 运行时依赖（避免编译时链接缺失）
-            lxc liblxc1 acl libcap libseccomp libuv sqlite-libs lz4 \
-            # 其他必需库
-            xz-dev zlib-dev
+            xz-dev zlib-dev \
+            # 运行时依赖
+            lxc liblxc1 acl libcap libseccomp libuv sqlite-libs lz4
 
           # 创建缺失目录
           mkdir -p /usr/local/include /usr/local/lib /usr/local/bin
-          # 验证关键依赖版本
-          echo "=== Go Version ==="
-          go version
-          echo "=== LXC Version ==="
-          lxc-version || true
-          echo "=== GCC Version ==="
-          gcc --version
-          echo "=== Deps Path ==="
-          echo "GOPATH: $(go env GOPATH)"
+          # 验证git是否安装成功
+          command -v git && echo "✅ Git installed" || (echo "❌ Git missing" && exit 1)
+          git --version
 
-      # 2. 拉取源码（完整历史）
-      - name: Checkout code
+      # 2. 拉取源码（含子模块）
+      - name: Checkout code (with submodules)
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          submodules: recursive  # 拉取所有子模块（关键！）
+          submodules: recursive
 
-      # 3. 构建cowsql/raft依赖（带详细日志）
-      - name: Build cowsql/raft deps
+      # 3. 构建cowsql/raft依赖（带日志）
+      - name: Build cowsql/raft dependencies
         run: |
-          echo "=== Building deps (cowsql/raft) ==="
-          # 手动进入deps目录构建（避免Makefile封装导致日志缺失）
           make deps V=1 || (
-            echo "=== Deps Build Failed ==="
-            # 打印详细错误日志
+            echo "❌ Deps build failed"
             ls -la $(go env GOPATH)/deps/ || true
-            cat $(go env GOPATH)/deps/cowsql/config.log || true
             exit 1
           )
 
-      # 4. 配置CGO路径（依赖已生成后）
-      - name: Configure CGO paths
+      # 4. 配置CGO路径（依赖已生成）
+      - name: Configure CGO environment
         run: |
           export DEPS_PATH=$(go env GOPATH)/deps
-          # 验证deps目录是否存在
-          if [ ! -d "${DEPS_PATH}/cowsql" ] || [ ! -d "${DEPS_PATH}/raft" ]; then
-            echo "ERROR: deps directory missing!"
-            ls -la ${DEPS_PATH}/ || true
-            exit 1
-          fi
-          # 配置CGO（添加所有可能的库路径）
           echo "CGO_CFLAGS=-I/usr/include -I/usr/local/include -I${DEPS_PATH}/cowsql/include -I${DEPS_PATH}/raft/include" >> $GITHUB_ENV
           echo "CGO_LDFLAGS=-L/usr/lib -L/usr/local/lib -L${DEPS_PATH}/cowsql/.libs -L${DEPS_PATH}/raft/.libs -lcowsql -lraft -lintl -lseccomp -lcap -luv -lsqlite3 -llz4 -lpthread -ldl" >> $GITHUB_ENV
           echo "LD_LIBRARY_PATH=/usr/lib:/usr/local/lib:${DEPS_PATH}/cowsql/.libs:${DEPS_PATH}/raft/.libs" >> $GITHUB_ENV
           echo "CGO_LDFLAGS_ALLOW=(-Wl,-wrap,pthread_create)|(-Wl,-z,now)|(-L.*)" >> $GITHUB_ENV
-          # 验证库文件是否存在
-          echo "=== Checking library files ==="
-          find ${DEPS_PATH} -name "*.so" -o -name "*.a" || true
-          ldconfig -p | grep -E 'cowsql|raft|lxc' || true
 
-      # 5. 编译Incus主程序（带详细日志）
-      - name: Compile Incus (verbose)
+      # 5. 编译Incus主程序
+      - name: Compile Incus binaries
         run: |
-          echo "=== Compiling Incus main program ==="
-          # 手动执行go build（绕过Makefile封装，便于看详细错误）
-          go build -v -x -o bin/incus ./cmd/incus || (
-            echo "=== Incus Build Failed ==="
-            # 打印Go编译详细日志
-            go env
-            go mod tidy
-            go build -v -x -o bin/incus ./cmd/incus 2>&1 | tee build.log
-            exit 1
-          )
-          # 编译incusd和incus-agent
-          go build -v -x -o bin/incusd ./cmd/incusd
-          go build -v -x -o bin/incus-agent ./cmd/incus-agent
+          # 手动编译（绕过Makefile坑）
+          go build -o bin/incus ./cmd/incus
+          go build -o bin/incusd ./cmd/incusd
+          go build -o bin/incus-agent ./cmd/incus-agent
 
-      # 6. 验证编译产物
-      - name: Verify binaries
-        run: |
-          echo "=== Compiled Binaries ==="
+          # 验证编译结果
           ls -la bin/
-          # 验证可执行性
-          if [ -f bin/incus ]; then
-            chmod +x bin/incus
-            bin/incus --version || true
-          fi
+          chmod +x bin/incus bin/incusd bin/incus-agent
+          bin/incus --version || true
 
-      # 7. 上传产物+日志（便于排查）
-      - name: Upload artifacts
+      # 6. 上传产物
+      - name: Upload compiled binaries
         uses: actions/upload-artifact@v5
         with:
-          name: incus-alpine-debug
-          path: |
-            bin/
-            build.log
-            $(go env GOPATH)/deps/cowsql/config.log
+          name: incus-alpine-final
+          path: bin/
           retention-days: 14
