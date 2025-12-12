@@ -27,7 +27,7 @@ jobs:
       - name: Initialize Alpine Environment
         run: |
           # 更新系统+升级包
-          apk update && apk upgrade -y
+          apk update
           # 安装核心依赖（分模块，便于维护）
           apk add --no-cache \
             # 基础工具链
