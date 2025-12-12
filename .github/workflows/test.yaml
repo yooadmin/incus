@@ -1,4 +1,4 @@
-name: Incus Alpine Build & Test (No Static Analysis)
+name: Incus Alpine Compile Only (No Tests)
 on:
   push:
     branches: [main, stable-*]
@@ -7,7 +7,6 @@ on:
 
 permissions:
   contents: read
-  actions: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -19,59 +18,48 @@ jobs:
     runs-on: ubuntu-24.04
     container:
       image: alpine:edge
-      options: --privileged --security-opt seccomp=unconfined
+      options: --privileged
+
     steps:
-      # Step 1: 安装核心依赖
-      - name: Install Core Dependencies
+      - name: Install Minimal Compile Dependencies
         run: |
           echo "http://dl-cdn.alpinelinux.org/alpine/edge/main" > /etc/apk/repositories
           echo "http://dl-cdn.alpinelinux.org/alpine/edge/community" >> /etc/apk/repositories
-          
           apk update
           apk add --no-cache \
             git make gcc musl-dev pkgconf bash libc6-compat curl \
             gettext gettext-dev libintl \
             acl-dev autoconf automake eudev-dev go intltool libcap-dev \
-            libtool libuv-dev linux-headers lz4-dev tcl-dev sqlite-dev lxc-dev xz \
-            apparmor btrfs-progs busybox-static dbus dnsmasq iproute2 iptables \
-            libseccomp-dev lvm2 nftables rsync squashfs-tools shadow-uidmap \
-            tar util-linux-misc zfs
+            libtool libuv-dev linux-headers lz4-dev tcl-dev sqlite-dev lxc-dev xz
 
-      # Step 2: 检出代码
-      - name: Checkout Incus Source
+      - name: Checkout Incus Source Code
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          path: incus
+          path: incus  # 代码检出到 /__w/incus/incus
 
-      # Step 3: 配置Go环境 & 编译参数
-      - name: Setup Go & Compile Env
+      - name: Setup Go Environment & Compile Flags
         working-directory: incus
         run: |
           echo "GOPATH=$(go env GOPATH)" >> $GITHUB_ENV
           echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
           echo "CGO_CFLAGS=-I$(go env GOPATH)/deps/raft/include -I$(go env GOPATH)/deps/cowsql/include -I/usr/include" >> $GITHUB_ENV
           echo "CGO_LDFLAGS=-L$(go env GOPATH)/deps/raft/.libs -L$(go env GOPATH)/deps/cowsql/.libs -L/usr/lib -lintl" >> $GITHUB_ENV
-          echo "LD_LIBRARY_PATH=$(go env GOPATH)/deps/raft/.libs:$(go env GOPATH)/deps/cowsql/.libs:/usr/lib" >> $GITHUB_ENV
           echo "CGO_LDFLAGS_ALLOW=(-Wl,-wrap,pthread_create)|(-Wl,-z,now)" >> $GITHUB_ENV
 
-      # Step 4: 下载Go模块依赖
-      - name: Download Go Dependencies
+      - name: Download Go Module Dependencies
         working-directory: incus
         run: go mod download
 
-      # Step 5: 修复cowsql编译目录缺失
-      - name: Fix Cowsql Compile Dir
+      - name: Fix Cowsql Compile Directory
         run: |
           mkdir -p /usr/local/include
           chmod 755 /usr/local/include
 
-      # Step 6: 安装cowsql/raft依赖
       - name: Install Cowsql/Raft Dependencies
         working-directory: incus
         run: make deps
 
-      # Step 7: 编译Incus
       - name: Compile Incus
         working-directory: incus
         run: |
@@ -85,14 +73,23 @@ jobs:
             CGO_CFLAGS="${{ env.CGO_CFLAGS }}" \
             CGO_LDFLAGS="${{ env.CGO_LDFLAGS }}" \
             CGO_LDFLAGS_ALLOW="${{ env.CGO_LDFLAGS_ALLOW }}"
+          
+          # 可选：验证编译产物是否存在（便于调试）
+          ls -l ./bin/ || echo "Bin directory not found"
 
-      # Step 11: 上传编译产物
-      - name: Upload Build Artifacts
+      # 核心修复：修正产物上传路径
+      - name: Upload Compiled Artifacts
         uses: actions/upload-artifact@v5
         with:
           name: incus-alpine-x86_64
+          # 正确路径：代码在incus目录下，编译产物在 ./bin（即 /__w/incus/incus/bin）
           path: |
             incus/bin/incus
             incus/bin/incus-agent
             incus/bin/incus-migrate
+          # 兜底：若上面路径仍找不到，用绝对路径（备选方案）
+          # path: |
+          #   /__w/incus/incus/bin/incus
+          #   /__w/incus/incus/bin/incus-agent
+          #   /__w/incus/incus/bin/incus-migrate
           retention-days: 7
