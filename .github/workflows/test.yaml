@@ -50,6 +50,16 @@ jobs:
           CGO_LDFLAGS_ALLOW: "(-Wl,-wrap,pthread_create)|(-Wl,-z,now)"
         run: |
           make deps
+
+      - name: run
+        run: |
+          echo "CGO_CFLAGS=-I$(go env GOPATH)/deps/raft/include/ -I$(go env GOPATH)/deps/cowsql/include/" >> $GITHUB_ENV
+          echo "CGO_LDFLAGS=-L$(go env GOPATH)/deps/raft/.libs -L$(go env GOPATH)/deps/cowsql/.libs/" >> $GITHUB_ENV
+          echo "LD_LIBRARY_PATH=$(go env GOPATH)/deps/raft/.libs/:$(go env GOPATH)/deps/cowsql/.libs/" >> $GITHUB_ENV
+          echo "CGO_LDFLAGS_ALLOW=(-Wl,-wrap,pthread_create)|(-Wl,-z,now)" >> $GITHUB_ENV
+
+      - name: Run Incus build
+        run: |
           make
 
       - name: Run static analysis
