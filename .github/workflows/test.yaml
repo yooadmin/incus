@@ -1,96 +1,150 @@
-name: Tests (Alpine)
+name: Incus Alpine Build & Test
 on:
   push:
-    branches:
-      - main
-      - stable-*
+    branches: [main, stable-*]
   pull_request:
+    branches: [main, stable-*]
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  alpine-tests:
-    name: Alpine Linux Tests
-    runs-on: ubuntu-24.04  # 使用Ubuntu主机运行Alpine容器
+  alpine-compile:
+    name: Alpine x86_64 Compile & Test
+    runs-on: ubuntu-24.04
     container:
-      image: alpine:latest
-      options: --privileged  # 测试需要特权模式（如挂载、网络配置等）
-
+      # 必须用edge版本（stable版依赖过旧）
+      image: alpine:edge
+      # 特权模式：支持容器嵌套/存储后端测试
+      options: --privileged --security-opt seccomp=unconfined
     steps:
-      - name: Update Alpine and install base dependencies
+      # Step 1: 系统初始化 & 安装全量依赖
+      - name: Initialize Alpine Environment
         run: |
-          apk add git gettext-dev acl-dev autoconf automake eudev-dev gettext-dev go intltool libcap-dev libtool libuv-dev linux-headers lz4-dev tcl-dev sqlite-dev lxc-dev make xz
+          # 更新系统+升级包
+          apk update && apk upgrade -y
+          # 安装核心依赖（分模块，便于维护）
+          apk add --no-cache \
+            # 基础工具链
+            git make gcc musl-dev pkgconf bash libc6-compat \
+            # Gettext/libintl（解决链接错误核心）
+            gettext gettext-dev libintl \
+            # Incus编译依赖（文档指定）
+            acl-dev autoconf automake eudev-dev go intltool libcap-dev \
+            libtool libuv-dev linux-headers lz4-dev tcl-dev sqlite-dev lxc-dev xz \
+            # 系统测试依赖
+            apparmor btrfs-progs busybox-static dbus dnsmasq iproute2 iptables \
+            libseccomp-dev lvm2 nftables rsync squashfs-tools shadow-uidmap \
+            tar util-linux-misc zfs \
+            # 静态分析工具
+            shellcheck py3-pip && pip install codespell flake8
 
-      - name: Checkout code
+      # Step 2: 检出代码（完整历史）
+      - name: Checkout Incus Source
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          path: incus
 
-      - name: Set up Go environment
+      # Step 3: 配置Go环境 & 核心编译参数
+      - name: Setup Go & Compile Env
+        working-directory: incus
         run: |
+          # 导出Go路径
           echo "GOPATH=$(go env GOPATH)" >> $GITHUB_ENV
           echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+          # 核心CGO参数（解决libintl/依赖库链接）
+          echo "CGO_CFLAGS=-I$(go env GOPATH)/deps/raft/include -I$(go env GOPATH)/deps/cowsql/include -I/usr/include" >> $GITHUB_ENV
+          echo "CGO_LDFLAGS=-L$(go env GOPATH)/deps/raft/.libs -L$(go env GOPATH)/deps/cowsql/.libs -L/usr/lib -lintl" >> $GITHUB_ENV
+          echo "LD_LIBRARY_PATH=$(go env GOPATH)/deps/raft/.libs:$(go env GOPATH)/deps/cowsql/.libs:/usr/lib" >> $GITHUB_ENV
+          echo "CGO_LDFLAGS_ALLOW=(-Wl,-wrap,pthread_create)|(-Wl,-z,now)" >> $GITHUB_ENV
 
-      - name: Install Go dependencies
-        run: |
-          go mod download
+      # Step 4: 下载Go模块依赖
+      - name: Download Go Dependencies
+        working-directory: incus
+        run: go mod download
 
-      - name: Create missing include directory
+      # Step 5: 修复cowsql编译目录缺失
+      - name: Fix Cowsql Compile Dir
         run: |
           mkdir -p /usr/local/include
           chmod 755 /usr/local/include
 
-      - name: Run Incus build
-        env:
-          CGO_LDFLAGS_ALLOW: "(-Wl,-wrap,pthread_create)|(-Wl,-z,now)"
-        run: |
-          make deps
+      # Step 6: 安装cowsql/raft依赖（文档要求）
+      - name: Install Cowsql/Raft Dependencies
+        working-directory: incus
+        run: make deps
 
-      - name: run
+      # Step 7: 编译Incus（核心修复）
+      - name: Compile Incus
+        working-directory: incus
         run: |
-          echo "CGO_CFLAGS=-I$(go env GOPATH)/deps/raft/include/ -I$(go env GOPATH)/deps/cowsql/include/" >> $GITHUB_ENV
-          echo "CGO_LDFLAGS=-L$(go env GOPATH)/deps/raft/.libs -L$(go env GOPATH)/deps/cowsql/.libs/" >> $GITHUB_ENV
-          echo "LD_LIBRARY_PATH=$(go env GOPATH)/deps/raft/.libs/:$(go env GOPATH)/deps/cowsql/.libs/" >> $GITHUB_ENV
-          echo "CGO_LDFLAGS_ALLOW=(-Wl,-wrap,pthread_create)|(-Wl,-z,now)" >> $GITHUB_ENV
-
-      - name: Run Incus build1
-        env:
-          CGO_LDFLAGS_ALLOW: "(-Wl,-wrap,pthread_create)|(-Wl,-z,now)"
-        run: |
-          # 解决 Git 仓库所有权问题
+          # 解决Git仓库所有权问题
           git config --global --add safe.directory /__w/incus/incus
-          # 禁用 VCS stamping 并构建
-          make build GOFLAGS="-buildvcs=false"
-          make
+          # 编译（禁用VCS+传递所有CGO参数）
+          make build \
+            GOFLAGS="-buildvcs=false" \
+            CGO_CFLAGS="${{ env.CGO_CFLAGS }}" \
+            CGO_LDFLAGS="${{ env.CGO_LDFLAGS }}" \
+            CGO_LDFLAGS_ALLOW="${{ env.CGO_LDFLAGS_ALLOW }}"
+          # 完整构建
+          make \
+            CGO_CFLAGS="${{ env.CGO_CFLAGS }}" \
+            CGO_LDFLAGS="${{ env.CGO_LDFLAGS }}" \
+            CGO_LDFLAGS_ALLOW="${{ env.CGO_LDFLAGS_ALLOW }}"
 
-      - name: Run static analysis
-        run: |
-          make static-analysis
+      # Step 8: 静态分析（可选，验证代码质量）
+      - name: Static Analysis
+        working-directory: incus
+        run: make static-analysis
 
-      - name: Run unit tests
+      # Step 9: 单元测试
+      - name: Unit Tests
+        working-directory: incus
         run: |
-          go test ./...
+          go test ./... \
+            -buildvcs=false \
+            -v \
+            CGO_CFLAGS="${{ env.CGO_CFLAGS }}" \
+            CGO_LDFLAGS="${{ env.CGO_LDFLAGS }}"
 
-      - name: Prepare system tests
+      # Step 10: 系统测试准备（用户命名空间+服务）
+      - name: Prepare System Tests
+        working-directory: incus
         run: |
-          # 配置subuid/subgid（用于用户命名空间）
+          # 配置subuid/subgid（文档要求）
           echo "root:1000000:1000000000" >> /etc/subuid
           echo "root:1000000:1000000000" >> /etc/subgid
-
           # 启动必要服务
-          rc-service dbus start
-          rc-service apparmor start
+          rc-update add dbus && rc-service dbus start
+          rc-update add apparmor && rc-service apparmor start
+          # 修复Alpine AppArmor配置
+          mkdir -p /etc/apparmor.d && touch /etc/apparmor.d/tunables/global
 
-      - name: Run system tests (standalone)
+      # Step 11: 运行核心系统测试
+      - name: Run Core System Tests
+        working-directory: incus/test
         env:
-          INCUS_BACKEND: dir
+          INCUS_BACKEND: dir  # 最简存储后端（避免复杂依赖）
           INCUS_VERBOSE: 1
           INCUS_TMPFS: 1
-        run: |
-          cd test
-          ./main.sh standalone_core standalone_container
+          CGO_CFLAGS: "${{ env.CGO_CFLAGS }}"
+          CGO_LDFLAGS: "${{ env.CGO_LDFLAGS }}"
+          LD_LIBRARY_PATH: "${{ env.LD_LIBRARY_PATH }}"
+        run: ./main.sh standalone_core standalone_container
+
+      # Step 12: 上传编译产物（可选，便于下载）
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v5
+        with:
+          name: incus-alpine-x86_64
+          path: |
+            incus/bin/incus
+            incus/bin/incus-agent
+            incus/bin/incus-migrate
+          retention-days: 7
