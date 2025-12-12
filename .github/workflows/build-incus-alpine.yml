@@ -39,7 +39,7 @@ jobs:
           apk add --no-cache \
             # 官方指定的核心编译依赖
             acl-dev autoconf automake eudev-dev gettext-dev go intltool \
-            libcap-dev libtool libuv-dev linux-headers lz4-dev tcl-dev \
+            libcap-dev libtool libuv-dev linux-headers lz4-dev acl-dev \
             sqlite-dev lxc-dev make xz \
             # 官方指定的运行时依赖
             acl attr ca-certificates cgmanager dbus dnsmasq lxc iproute2 \
