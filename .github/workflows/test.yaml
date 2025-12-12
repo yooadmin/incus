@@ -24,34 +24,7 @@ jobs:
     steps:
       - name: Update Alpine and install base dependencies
         run: |
-          apk update
-          apk add --no-cache \
-            git \
-            go \
-            make \
-            gcc \
-            musl-dev \
-            libc6-compat \
-            curl \
-            gettext \
-            libacl-dev \
-            libcap-dev \
-            dbus-dev \
-            libseccomp-dev \
-            libselinux-dev \
-            sqlite-dev \
-            libtool \
-            eudev-dev \
-            lxc-dev \
-            linux-headers \
-            pkgconf \
-            shellcheck \
-            busybox-static \
-            apparmor \
-            btrfs-progs \
-            zfs-utils \
-            lvm2 \
-            nftables
+          apk add acl-dev autoconf automake eudev-dev gettext-dev go intltool libcap-dev libtool libuv-dev linux-headers lz4-dev tcl-dev sqlite-dev lxc-dev make xz
 
       - name: Checkout code
         uses: actions/checkout@v6
