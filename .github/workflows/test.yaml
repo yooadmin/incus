@@ -45,14 +45,11 @@ jobs:
           mkdir -p /usr/local/include
           chmod 755 /usr/local/include
 
-      - name: Install dependencies (cowsql/raft)
-        run: |
-          make deps
-
       - name: Run Incus build
         env:
           CGO_LDFLAGS_ALLOW: "(-Wl,-wrap,pthread_create)|(-Wl,-z,now)"
         run: |
+          make deps
           make
 
       - name: Run static analysis
