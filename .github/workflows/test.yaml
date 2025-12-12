@@ -36,8 +36,6 @@ jobs:
             libtool libuv-dev linux-headers lz4-dev tcl-dev sqlite-dev lxc-dev xz \
             apparmor btrfs-progs busybox-static dbus dnsmasq iproute2 iptables \
             libseccomp-dev lvm2 nftables rsync squashfs-tools shadow-uidmap \
-            tar util-linux-misc zfs \
-            shellcheck py3-pip && pip install codespell flake8
 
       # Step 2: 检出代码（完整历史）
       - name: Checkout Incus Source
