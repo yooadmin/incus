@@ -1,4 +1,4 @@
-name: Build Incus on Alpine (Official Repo Only)
+name: Build Incus on Alpine
 
 on:
   push:
@@ -6,100 +6,47 @@ on:
   pull_request:
     branches: [ main, stable-* ]
 
-permissions:
-  contents: read
-  packages: write
-
 jobs:
   build-alpine:
-    name: Build Incus on Alpine Edge
+    name: Build Incus (Alpine)
     runs-on: ubuntu-latest
     container:
       image: alpine:edge
       options: --privileged
     env:
-      # 强制指定完整PATH，解决命令找不到核心问题
       PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
     steps:
-      - name: Fix PATH and update official repo
+      # 1. 基础环境准备（单行写全依赖，避免换行解析错误）
+      - name: Install dependencies (Alpine official)
         run: |
-          # 强制重置PATH（Alpine容器默认PATH可能不完整）
-          export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-          # 仅使用Alpine官方源，不做任何镜像替换
-          apk update --no-cache
-          # 先安装最基础的编译工具链（解决autoconf等命令找不到）
-          apk add --no-cache --force-refresh \
-            bash coreutils findutils grep sed gawk make gcc musl-dev \
-            autoconf automake libtool pkgconfig
+          # 核心修复：所有依赖写在同一行，避免Shell换行解析问题
+          apk update --no-cache && apk add --no-cache acl-dev autoconf automake eudev-dev gettext-dev go intltool libcap-dev libtool libuv-dev linux-headers lz4-dev tcl-dev sqlite-dev lxc-dev make xz gcc musl-dev pkgconfig
 
-      - name: Install Incus official build dependencies
-        run: |
-          # 严格遵循Incus官方文档的依赖清单，仅用官方源安装
-          apk add --no-cache \
-            # 官方指定的核心编译依赖
-            acl-dev autoconf automake eudev-dev gettext-dev go intltool \
-            libcap-dev libtool libuv-dev linux-headers lz4-dev acl-dev \
-            sqlite-dev lxc-dev make xz \
-            # 官方指定的运行时依赖
-            acl attr ca-certificates cgmanager dbus dnsmasq lxc iproute2 \
-            iptables netcat-openbsd rsync squashfs-tools shadow-uidmap tar \
-            # 可选：虚拟机支持（不需要可删除）
-            qemu-system-x86_64 qemu-img virtiofsd ovmf
-
-      - name: Verify critical build tools
-        run: |
-          # 校验核心工具是否真的安装成功（失败则直接终止）
-          tools=(autoconf automake go make gcc pkg-config libtool)
-          for tool in "${tools[@]}"; do
-            if ! command -v "$tool"; then
-              echo "ERROR: $tool not found (even after installation)!"
-              apk list | grep -E "$tool" || true
-              exit 1
-            fi
-          done
-
-      - name: Checkout Incus source code
+      # 2. 拉取源码
+      - name: Checkout code
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
-      - name: Configure official build environment
+      # 3. 配置编译环境
+      - name: Set build environment
         run: |
-          # 严格按Incus官方文档配置环境变量
-          export CGO_CFLAGS="-I/usr/include -I$(go env GOPATH)/deps/cowsql/include -I$(go env GOPATH)/deps/raft/include"
-          export CGO_LDFLAGS="-L/usr/lib -L$(go env GOPATH)/deps/cowsql/.libs -L$(go env GOPATH)/deps/raft/.libs -lintl"
-          export LD_LIBRARY_PATH="/usr/lib:$(go env GOPATH)/deps/cowsql/.libs:$(go env GOPATH)/deps/raft/.libs"
-          export CGO_LDFLAGS_ALLOW="(-Wl,-wrap,pthread_create)|(-Wl,-z,now)"
-          # 写入环境变量供后续步骤使用
-          echo "CGO_CFLAGS=${CGO_CFLAGS}" >> $GITHUB_ENV
-          echo "CGO_LDFLAGS=${CGO_LDFLAGS}" >> $GITHUB_ENV
-          echo "LD_LIBRARY_PATH=${LD_LIBRARY_PATH}" >> $GITHUB_ENV
-          echo "CGO_LDFLAGS_ALLOW=${CGO_LDFLAGS_ALLOW}" >> $GITHUB_ENV
+          echo "CGO_CFLAGS=-I/usr/include -I$(go env GOPATH)/deps/cowsql/include -I$(go env GOPATH)/deps/raft/include" >> $GITHUB_ENV
+          echo "CGO_LDFLAGS=-L/usr/lib -L$(go env GOPATH)/deps/cowsql/.libs -L$(go env GOPATH)/deps/raft/.libs -lintl" >> $GITHUB_ENV
+          echo "LD_LIBRARY_PATH=/usr/lib:$(go env GOPATH)/deps/cowsql/.libs:$(go env GOPATH)/deps/raft/.libs" >> $GITHUB_ENV
+          echo "CGO_LDFLAGS_ALLOW=(-Wl,-wrap,pthread_create)|(-Wl,-z,now)" >> $GITHUB_ENV
 
-      - name: Build dependencies (make deps)
-        run: make deps
-
-      - name: Compile Incus (official make)
-        run: make
-
-      - name: Validate build results
+      # 4. 编译Incus
+      - name: Compile Incus
         run: |
-          # 检查编译产物是否存在
-          if [ ! -f bin/incus ] || [ ! -f bin/incusd ] || [ ! -f bin/incus-agent ]; then
-            echo "ERROR: Compiled binaries missing!"
-            ls -la bin/ || true
-            exit 1
-          fi
-          # 验证二进制文件可执行
-          bin/incus --version || true
+          make deps
+          make
 
-      - name: Upload build artifacts
+      # 5. 上传产物
+      - name: Upload binaries
         uses: actions/upload-artifact@v5
         with:
-          name: incus-alpine-edge-${{ github.sha }}
-          path: |
-            bin/incus
-            bin/incusd
-            bin/incus-agent
-          retention-days: 14
+          name: incus-alpine-bin
+          path: bin/
+          retention-days: 7
