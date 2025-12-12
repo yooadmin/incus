@@ -1,0 +1,220 @@
+name: Alpine Tests
+on:
+  push:
+    branches:
+      - main
+      - stable-*
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-alpine-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  alpine-code-tests:
+    name: Alpine Code Tests
+    runs-on: ubuntu-24.04  # 使用Ubuntu主机运行Alpine容器
+    container:
+      image: alpine:edge
+      options: --privileged  # 需特权模式运行系统测试
+
+    steps:
+      - name: Update Alpine and install base tools
+        run: |
+          apk update
+          apk add --no-cache \
+            git \
+            curl \
+            build-base \
+            go \
+            bash \
+            gettext \
+            libacl-dev \
+            libcap-dev \
+            dbus-dev \
+            cowsql-dev \
+            lxc-dev \
+            libseccomp-dev \
+            sqlite-dev \
+            libtool \
+            eudev-dev \
+            linux-headers \
+            lz4-dev \
+            tcl-dev \
+            shellcheck \
+            py3-pip
+
+      - name: Install Python tools
+        run: |
+          pip install codespell flake8
+
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Fix permissions
+        run: |
+          chown -R root:root .
+
+      - name: Download Go dependencies
+        run: |
+          go mod download
+
+      - name: Build Incus
+        env:
+          CGO_LDFLAGS_ALLOW: "(-Wl,-wrap,pthread_create)|(-Wl,-z,now)"
+        run: |
+          make
+
+      - name: Run static analysis
+        env:
+          GITHUB_BEFORE: ${{ github.event.before }}
+        run: |
+          make static-analysis
+
+      - name: Run unit tests
+        run: |
+          go test ./...
+
+  alpine-system-tests:
+    name: Alpine System Tests
+    runs-on: ubuntu-24.04
+    container:
+      image: alpine:edge
+      options: --privileged -v /dev/fuse:/dev/fuse
+
+    strategy:
+      fail-fast: false
+      matrix:
+        suite:
+          - standalone_core
+          - standalone_container
+          - standalone_network
+        backend:
+          - dir
+          - btrfs
+          - zfs
+
+    steps:
+      - name: Update system and install dependencies
+        run: |
+          apk update
+          apk add --no-cache \
+            bash \
+            git \
+            go \
+            build-base \
+            libacl \
+            attr \
+            bind-tools \
+            btrfs-progs \
+            busybox-static \
+            dnsmasq \
+            eudev \
+            gettext \
+            jq \
+            lxc-utils \
+            lvm2 \
+            nftables \
+            openssl \
+            rsync \
+            sqlite \
+            squashfs-tools \
+            tar \
+            tcl \
+            xfsprogs \
+            xz \
+            zfs \
+            linux-headers \
+            libseccomp-dev \
+            cowsql-dev \
+            lxc-dev \
+            eudev-dev \
+            llvm \
+            apparmor \
+            py3-pip
+
+          # 启动必要服务
+          rc-update add dbus
+          rc-service dbus start
+          rc-update add apparmor
+          rc-service apparmor start
+
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Configure subuid/subgid
+        run: |
+          echo "root:1000000:1000000000" | tee /etc/subuid /etc/subgid
+
+      - name: Download Go dependencies
+        run: |
+          go mod download
+
+      - name: Build Incus
+        env:
+          CGO_LDFLAGS_ALLOW: "(-Wl,-wrap,pthread_create)|(-Wl,-z,now)"
+        run: |
+          make
+
+      - name: Setup storage backend (btrfs)
+        if: matrix.backend == 'btrfs'
+        run: |
+          dd if=/dev/zero of=/btrfs.img bs=1G count=10
+          mkfs.btrfs /btrfs.img
+          mkdir -p /var/lib/incus/storage-pools
+          mount -o loop /btrfs.img /var/lib/incus/storage-pools
+
+      - name: Setup storage backend (zfs)
+        if: matrix.backend == 'zfs'
+        run: |
+          dd if=/dev/zero of=/zfs.img bs=1G count=10
+          zpool create incus-pool /zfs.img
+          zfs set mountpoint=/var/lib/incus/storage-pools incus-pool
+
+      - name: Run system tests
+        env:
+          INCUS_BACKEND: ${{ matrix.backend }}
+          INCUS_VERBOSE: "1"
+          INCUS_OFFLINE: "1"
+          INCUS_CONCURRENT: "1"
+        run: |
+          cd test
+          ./main.sh ${{ matrix.suite }}
+
+  alpine-client-build:
+    name: Alpine Client Build
+    runs-on: ubuntu-24.04
+    container:
+      image: alpine:edge
+
+    steps:
+      - name: Install build tools
+        run: |
+          apk update
+          apk add --no-cache go build-base
+
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Build static clients
+        run: |
+          mkdir -p bin
+          
+          # 构建x86_64客户端
+          CGO_ENABLED=0 GOARCH=amd64 go build -o bin/incus.alpine.x86_64 ./cmd/incus
+          CGO_ENABLED=0 GOARCH=amd64 go build -o bin/incus-agent.alpine.x86_64 ./cmd/incus-agent
+          
+          # 构建arm64客户端
+          CGO_ENABLED=0 GOARCH=arm64 go build -o bin/incus.alpine.aarch64 ./cmd/incus
+          CGO_ENABLED=0 GOARCH=arm64 go build -o bin/incus-agent.alpine.aarch64 ./cmd/incus-agent
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v5
+        with:
+          name: alpine-clients
+          path: bin/
