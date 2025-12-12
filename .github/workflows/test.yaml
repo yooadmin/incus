@@ -44,6 +44,7 @@ jobs:
         env:
           CGO_LDFLAGS_ALLOW: "(-Wl,-wrap,pthread_create)|(-Wl,-z,now)"
         run: |
+          make deps
           make
 
       - name: Run static analysis
