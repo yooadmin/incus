@@ -15,12 +15,19 @@ jobs:
       options: --privileged
     env:
       PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      # 全局禁用gcc警告转错误
+      CFLAGS: "-Wno-error -I/usr/include"
+      CXXFLAGS: "-Wno-error -I/usr/include"
 
     steps:
-      # 1. 安装所有依赖（含git）
-      - name: Install all build dependencies
+      # 1. 安装依赖+创建缺失目录
+      - name: Install dependencies & fix include dir
         run: |
-          apk update --no-cache && apk add --no-cache git acl-dev autoconf automake eudev-dev gettext-dev go intltool libcap-dev libtool libuv-dev linux-headers lz4-dev tcl-dev sqlite-dev lxc-dev make xz gcc musl-dev pkgconfig
+          apk update --no-cache && apk add --no-cache \
+            git acl-dev autoconf automake eudev-dev gettext-dev go intltool \
+            libcap-dev libtool libuv-dev linux-headers lz4-dev tcl-dev \
+            sqlite-dev lxc-dev make xz gcc musl-dev pkgconfig
+          mkdir -p /usr/local/include /usr/local/lib
 
       # 2. 拉取源码
       - name: Checkout code
@@ -28,21 +35,28 @@ jobs:
         with:
           fetch-depth: 0
 
-      # 3. 配置编译环境
-      - name: Set build environment
+      # 3. 先构建依赖（cowsql/raft），此时才会生成deps目录
+      - name: Build dependencies (cowsql/raft)
         run: |
-          echo "CGO_CFLAGS=-I/usr/include -I$(go env GOPATH)/deps/cowsql/include -I$(go env GOPATH)/deps/raft/include" >> $GITHUB_ENV
-          echo "CGO_LDFLAGS=-L/usr/lib -L$(go env GOPATH)/deps/cowsql/.libs -L$(go env GOPATH)/deps/raft/.libs -lintl" >> $GITHUB_ENV
-          echo "LD_LIBRARY_PATH=/usr/lib:$(go env GOPATH)/deps/cowsql/.libs:$(go env GOPATH)/deps/raft/.libs" >> $GITHUB_ENV
+          # 构建依赖时仅用系统基础路径，不引用未生成的deps路径
+          make deps CFLAGS="-Wno-error -I/usr/include" CXXFLAGS="-Wno-error -I/usr/include"
+
+      # 4. 依赖构建完成后，再配置CGO路径（此时deps目录已存在）
+      - name: Configure CGO paths (after deps built)
+        run: |
+          # 动态获取deps路径，配置CGO环境变量
+          export DEPS_PATH=$(go env GOPATH)/deps
+          echo "CGO_CFLAGS=-I/usr/include -I${DEPS_PATH}/cowsql/include -I${DEPS_PATH}/raft/include" >> $GITHUB_ENV
+          echo "CGO_LDFLAGS=-L/usr/lib -L${DEPS_PATH}/cowsql/.libs -L${DEPS_PATH}/raft/.libs -lintl" >> $GITHUB_ENV
+          echo "LD_LIBRARY_PATH=/usr/lib:${DEPS_PATH}/cowsql/.libs:${DEPS_PATH}/raft/.libs" >> $GITHUB_ENV
           echo "CGO_LDFLAGS_ALLOW=(-Wl,-wrap,pthread_create)|(-Wl,-z,now)" >> $GITHUB_ENV
 
-      # 4. 编译Incus
-      - name: Compile Incus
+      # 5. 最后编译Incus主程序（使用已配置的CGO路径）
+      - name: Compile Incus main program
         run: |
-          make deps
-          make
+          make CFLAGS="-Wno-error -I/usr/include" CXXFLAGS="-Wno-error -I/usr/include"
 
-      # 5. 上传产物
+      # 6. 上传产物
       - name: Upload binaries
         uses: actions/upload-artifact@v5
         with:
