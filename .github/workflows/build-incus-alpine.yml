@@ -1,0 +1,94 @@
+name: Build Incus on Alpine
+
+on:
+  push:
+    branches: [ main, stable-* ]
+  pull_request:
+    branches: [ main, stable-* ]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-alpine:
+    name: Build on Alpine
+    runs-on: ubuntu-latest  # 使用Ubuntu主机运行Alpine容器
+    container:
+      image: alpine:edge  # Alpine edge版本包含较新的依赖
+      options: --privileged  # 需特权模式以支持部分编译依赖
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Update system and install dependencies
+        run: |
+          apk update
+          # 安装编译依赖（参考官方文档）
+          apk add --no-cache \
+            acl-dev \
+            autoconf \
+            automake \
+            eudev-dev \
+            gettext-dev \
+            go \
+            intltool \
+            libcap-dev \
+            libtool \
+            libuv-dev \
+            linux-headers \
+            lz4-dev \
+            tcl-dev \
+            sqlite-dev \
+            lxc-dev \
+            make \
+            xz \
+            # 运行时依赖
+            acl \
+            attr \
+            ca-certificates \
+            cgmanager \
+            dbus \
+            dnsmasq \
+            iproute2 \
+            iptables \
+            netcat-openbsd \
+            rsync \
+            squashfs-tools \
+            shadow-uidmap \
+            tar
+
+      - name: Install Go dependencies
+        run: |
+          go mod download
+
+      - name: Prepare build environment
+        run: |
+          # 配置CGO路径（Alpine特有的库路径）
+          echo "CGO_CFLAGS=-I/usr/include" >> $GITHUB_ENV
+          echo "CGO_LDFLAGS=-L/usr/lib" >> $GITHUB_ENV
+          echo "LD_LIBRARY_PATH=/usr/lib:${LD_LIBRARY_PATH}" >> $GITHUB_ENV
+          # 允许必要的链接器选项
+          echo "CGO_LDFLAGS_ALLOW=(-Wl,-wrap,pthread_create)|(-Wl,-z,now)" >> $GITHUB_ENV
+
+      - name: Build dependencies
+        run: make deps
+
+      - name: Build Incus
+        run: make
+
+      - name: Run unit tests
+        run: make unit-test
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v5
+        with:
+          name: incus-alpine-edge
+          path: |
+            bin/incus
+            bin/incusd
+            bin/incus-agent
+          retention-days: 7
