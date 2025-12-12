@@ -1,4 +1,4 @@
-name: Build Incus on Alpine (Fixed Dependencies)
+name: Build Incus on Alpine (Official Repo Only)
 
 on:
   push:
@@ -18,51 +18,55 @@ jobs:
       image: alpine:edge
       options: --privileged
     env:
-      # 强制指定完整PATH，解决命令找不到问题
+      # 强制指定完整PATH，解决命令找不到核心问题
       PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
     steps:
-      - name: Emergency fix for Alpine PATH & repo
+      - name: Fix PATH and update official repo
         run: |
-          # 强制重置PATH并更新系统核心库
+          # 强制重置PATH（Alpine容器默认PATH可能不完整）
           export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-          # 替换为国内镜像加速（可选，删除不影响）
-          sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories || true
-          # 先安装最基础的工具链（解决autoconf等命令找不到）
+          # 仅使用Alpine官方源，不做任何镜像替换
+          apk update --no-cache
+          # 先安装最基础的编译工具链（解决autoconf等命令找不到）
           apk add --no-cache --force-refresh \
             bash coreutils findutils grep sed gawk make gcc musl-dev \
             autoconf automake libtool pkgconfig
 
-      - name: Install full build dependencies (Official List)
+      - name: Install Incus official build dependencies
         run: |
-          # 严格按Incus官方文档安装所有依赖
+          # 严格遵循Incus官方文档的依赖清单，仅用官方源安装
           apk add --no-cache \
-            # 基础编译工具（补全所有缺失的核心工具）
+            # 官方指定的核心编译依赖
             acl-dev autoconf automake eudev-dev gettext-dev go intltool \
             libcap-dev libtool libuv-dev linux-headers lz4-dev tcl-dev \
             sqlite-dev lxc-dev make xz \
-            # 运行时依赖
+            # 官方指定的运行时依赖
             acl attr ca-certificates cgmanager dbus dnsmasq lxc iproute2 \
             iptables netcat-openbsd rsync squashfs-tools shadow-uidmap tar \
             # 可选：虚拟机支持（不需要可删除）
             qemu-system-x86_64 qemu-img virtiofsd ovmf
 
-      - name: Verify critical tools exist
+      - name: Verify critical build tools
         run: |
-          # 检查核心编译工具是否真的安装成功
-          command -v autoconf || (echo "autoconf missing!" && exit 1)
-          command -v automake || (echo "automake missing!" && exit 1)
-          command -v go || (echo "go missing!" && exit 1)
-          command -v make || (echo "make missing!" && exit 1)
+          # 校验核心工具是否真的安装成功（失败则直接终止）
+          tools=(autoconf automake go make gcc pkg-config libtool)
+          for tool in "${tools[@]}"; do
+            if ! command -v "$tool"; then
+              echo "ERROR: $tool not found (even after installation)!"
+              apk list | grep -E "$tool" || true
+              exit 1
+            fi
+          done
 
       - name: Checkout Incus source code
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
-      - name: Configure build environment (Official)
+      - name: Configure official build environment
         run: |
-          # 官方要求的CGO环境变量
+          # 严格按Incus官方文档配置环境变量
           export CGO_CFLAGS="-I/usr/include -I$(go env GOPATH)/deps/cowsql/include -I$(go env GOPATH)/deps/raft/include"
           export CGO_LDFLAGS="-L/usr/lib -L$(go env GOPATH)/deps/cowsql/.libs -L$(go env GOPATH)/deps/raft/.libs -lintl"
           export LD_LIBRARY_PATH="/usr/lib:$(go env GOPATH)/deps/cowsql/.libs:$(go env GOPATH)/deps/raft/.libs"
@@ -76,21 +80,21 @@ jobs:
       - name: Build dependencies (make deps)
         run: make deps
 
-      - name: Compile Incus
+      - name: Compile Incus (official make)
         run: make
 
-      - name: Validate build output
+      - name: Validate build results
         run: |
-          # 检查二进制文件是否生成
+          # 检查编译产物是否存在
           if [ ! -f bin/incus ] || [ ! -f bin/incusd ] || [ ! -f bin/incus-agent ]; then
-            echo "Compilation failed: binaries missing!"
-            ls -l bin/ || true
+            echo "ERROR: Compiled binaries missing!"
+            ls -la bin/ || true
             exit 1
           fi
-          # 验证版本
+          # 验证二进制文件可执行
           bin/incus --version || true
 
-      - name: Upload artifacts
+      - name: Upload build artifacts
         uses: actions/upload-artifact@v5
         with:
           name: incus-alpine-edge-${{ github.sha }}
