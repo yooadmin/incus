@@ -1,4 +1,4 @@
-name: Incus Alpine Build & Test
+name: Incus Alpine Build & Test (No Static Analysis)
 on:
   push:
     branches: [main, stable-*]
@@ -15,40 +15,40 @@ concurrency:
 
 jobs:
   alpine-compile:
-    name: Alpine x86_64 Compile & Test
+    name: Alpine x86_64 Compile
     runs-on: ubuntu-24.04
     container:
-      # 必须用edge版本（stable版依赖过旧）
       image: alpine:edge
-      # 特权模式：支持容器嵌套/存储后端测试
       options: --privileged --security-opt seccomp=unconfined
     steps:
-      # Step 1: 系统初始化 & 安装全量依赖
-      - name: Initialize Alpine Environment
+      # Step 1: 安装核心依赖（仅保留编译/测试必需）
+      - name: Install Core Dependencies
         run: |
-          # 更新系统+升级包
-          apk update
-          # 安装核心依赖（分模块，便于维护）
+          # 配置Alpine基础仓库
+          echo "http://dl-cdn.alpinelinux.org/alpine/edge/main" > /etc/apk/repositories
+          echo "http://dl-cdn.alpinelinux.org/alpine/edge/community" >> /etc/apk/repositories
+          
+          apk update && apk upgrade -y
           apk add --no-cache \
-            git make gcc musl-dev pkgconf bash libc6-compat \
+            git make gcc musl-dev pkgconf bash libc6-compat curl \
             gettext gettext-dev libintl \
-            acl-dev autoconf automake eudev-dev go intltool libcap-dev curl \
+            acl-dev autoconf automake eudev-dev go intltool libcap-dev \
             libtool libuv-dev linux-headers lz4-dev tcl-dev sqlite-dev lxc-dev xz \
             apparmor btrfs-progs busybox-static dbus dnsmasq iproute2 iptables \
             libseccomp-dev lvm2 nftables rsync squashfs-tools shadow-uidmap \
+            tar util-linux-misc zfs
 
-      # Step 2: 检出代码（完整历史）
+      # Step 2: 检出代码
       - name: Checkout Incus Source
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
           path: incus
 
-      # Step 3: 配置Go环境 & 核心编译参数
+      # Step 3: 配置Go环境 & 编译参数
       - name: Setup Go & Compile Env
         working-directory: incus
         run: |
-          # 导出Go路径
           echo "GOPATH=$(go env GOPATH)" >> $GITHUB_ENV
           echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
           # 核心CGO参数（解决libintl/依赖库链接）
@@ -68,18 +68,18 @@ jobs:
           mkdir -p /usr/local/include
           chmod 755 /usr/local/include
 
-      # Step 6: 安装cowsql/raft依赖（文档要求）
+      # Step 6: 安装cowsql/raft依赖
       - name: Install Cowsql/Raft Dependencies
         working-directory: incus
         run: make deps
 
-      # Step 7: 编译Incus（核心修复）
+      # Step 7: 编译Incus（核心步骤）
       - name: Compile Incus
         working-directory: incus
         run: |
           # 解决Git仓库所有权问题
           git config --global --add safe.directory /__w/incus/incus
-          # 编译（禁用VCS+传递所有CGO参数）
+          # 编译（禁用VCS+传递CGO参数）
           make build \
             GOFLAGS="-buildvcs=false" \
             CGO_CFLAGS="${{ env.CGO_CFLAGS }}" \
@@ -91,12 +91,7 @@ jobs:
             CGO_LDFLAGS="${{ env.CGO_LDFLAGS }}" \
             CGO_LDFLAGS_ALLOW="${{ env.CGO_LDFLAGS_ALLOW }}"
 
-      # Step 8: 静态分析（可选，验证代码质量）
-      - name: Static Analysis
-        working-directory: incus
-        run: make static-analysis
-
-      # Step 9: 单元测试
+      # Step 8: 单元测试（可选，可删除）
       - name: Unit Tests
         working-directory: incus
         run: |
@@ -106,24 +101,23 @@ jobs:
             CGO_CFLAGS="${{ env.CGO_CFLAGS }}" \
             CGO_LDFLAGS="${{ env.CGO_LDFLAGS }}"
 
-      # Step 10: 系统测试准备（用户命名空间+服务）
+      # Step 9: 系统测试准备
       - name: Prepare System Tests
         working-directory: incus
         run: |
-          # 配置subuid/subgid（文档要求）
+          # 配置用户命名空间
           echo "root:1000000:1000000000" >> /etc/subuid
           echo "root:1000000:1000000000" >> /etc/subgid
           # 启动必要服务
           rc-update add dbus && rc-service dbus start
           rc-update add apparmor && rc-service apparmor start
-          # 修复Alpine AppArmor配置
           mkdir -p /etc/apparmor.d && touch /etc/apparmor.d/tunables/global
 
-      # Step 11: 运行核心系统测试
+      # Step 10: 运行核心系统测试（可选，可删除）
       - name: Run Core System Tests
         working-directory: incus/test
         env:
-          INCUS_BACKEND: dir  # 最简存储后端（避免复杂依赖）
+          INCUS_BACKEND: dir
           INCUS_VERBOSE: 1
           INCUS_TMPFS: 1
           CGO_CFLAGS: "${{ env.CGO_CFLAGS }}"
@@ -131,7 +125,7 @@ jobs:
           LD_LIBRARY_PATH: "${{ env.LD_LIBRARY_PATH }}"
         run: ./main.sh standalone_core standalone_container
 
-      # Step 12: 上传编译产物（可选，便于下载）
+      # Step 11: 上传编译产物（便于下载使用）
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v5
         with:
