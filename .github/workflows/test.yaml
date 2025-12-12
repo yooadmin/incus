@@ -84,12 +84,7 @@ jobs:
           name: incus-alpine-x86_64
           # 正确路径：代码在incus目录下，编译产物在 ./bin（即 /__w/incus/incus/bin）
           path: |
-            incus/bin/incus
-            incus/bin/incus-agent
-            incus/bin/incus-migrate
-          # 兜底：若上面路径仍找不到，用绝对路径（备选方案）
-          # path: |
-          #   /__w/incus/incus/bin/incus
-          #   /__w/incus/incus/bin/incus-agent
-          #   /__w/incus/incus/bin/incus-migrate
+            /__w/incus/incus/bin/incus
+            /__w/incus/incus/bin/incus-agent
+            /__w/incus/incus/bin/incus-migrate
           retention-days: 7
