@@ -67,8 +67,12 @@ jobs:
 
       - name: Build Incus
         run: |
-          make clean
-          make
+            # 检查是否存在 clean 目标，存在则执行，否则跳过
+            if grep -q '^clean:' Makefile; then
+            make clean
+            fi
+            make
+            shell: sh -e {0}
 
       - name: Run static analysis
         run: |
