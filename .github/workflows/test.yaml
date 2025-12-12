@@ -59,7 +59,13 @@ jobs:
           echo "CGO_LDFLAGS_ALLOW=(-Wl,-wrap,pthread_create)|(-Wl,-z,now)" >> $GITHUB_ENV
 
       - name: Run Incus build1
+        env:
+          CGO_LDFLAGS_ALLOW: "(-Wl,-wrap,pthread_create)|(-Wl,-z,now)"
         run: |
+          # 解决 Git 仓库所有权问题
+          git config --global --add safe.directory /__w/incus/incus
+          # 禁用 VCS stamping 并构建
+          make build GOFLAGS="-buildvcs=false"
           make
 
       - name: Run static analysis
