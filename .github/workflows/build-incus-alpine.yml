@@ -1,4 +1,4 @@
-name: Build Incus on Alpine (Official Dependencies)
+name: Build Incus on Alpine (Fixed Dependencies)
 
 on:
   push:
@@ -16,63 +16,81 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: alpine:edge
-      options: --privileged  # 特权模式支持cowsql/raft编译
+      options: --privileged
+    env:
+      # 强制指定完整PATH，解决命令找不到问题
+      PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
     steps:
-      - name: Fix Alpine repository mirror (optional)
+      - name: Emergency fix for Alpine PATH & repo
         run: |
+          # 强制重置PATH并更新系统核心库
+          export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+          # 替换为国内镜像加速（可选，删除不影响）
           sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories || true
+          # 先安装最基础的工具链（解决autoconf等命令找不到）
+          apk add --no-cache --force-refresh \
+            bash coreutils findutils grep sed gawk make gcc musl-dev \
+            autoconf automake libtool pkgconfig
 
-      - name: Update system and install core dependencies
+      - name: Install full build dependencies (Official List)
         run: |
-          apk update && apk upgrade --no-cache
-          # 严格按照官方文档安装编译依赖
+          # 严格按Incus官方文档安装所有依赖
           apk add --no-cache \
-            # 基础编译工具
-            autoconf automake libtool make pkg-config intltool gettext-dev \
-            # Go环境
-            go \
-            # 系统库依赖（官方指定）
-            acl-dev eudev-dev libcap-dev libuv-dev linux-headers lz4-dev \
-            tcl-dev sqlite-dev lxc-dev xz \
-            # 运行时基础依赖
-            acl attr ca-certificates dbus dnsmasq lxc iproute2 iptables \
-            netcat-openbsd rsync squashfs-tools shadow-uidmap tar \
-            # 可选：虚拟机支持（如需编译虚拟机功能）
+            # 基础编译工具（补全所有缺失的核心工具）
+            acl-dev autoconf automake eudev-dev gettext-dev go intltool \
+            libcap-dev libtool libuv-dev linux-headers lz4-dev tcl-dev \
+            sqlite-dev lxc-dev make xz \
+            # 运行时依赖
+            acl attr ca-certificates cgmanager dbus dnsmasq lxc iproute2 \
+            iptables netcat-openbsd rsync squashfs-tools shadow-uidmap tar \
+            # 可选：虚拟机支持（不需要可删除）
             qemu-system-x86_64 qemu-img virtiofsd ovmf
+
+      - name: Verify critical tools exist
+        run: |
+          # 检查核心编译工具是否真的安装成功
+          command -v autoconf || (echo "autoconf missing!" && exit 1)
+          command -v automake || (echo "automake missing!" && exit 1)
+          command -v go || (echo "go missing!" && exit 1)
+          command -v make || (echo "make missing!" && exit 1)
 
       - name: Checkout Incus source code
         uses: actions/checkout@v6
         with:
-          fetch-depth: 0  # 完整克隆历史用于版本检测
+          fetch-depth: 0
 
-      - name: Configure build environment (官方指定的环境变量)
+      - name: Configure build environment (Official)
         run: |
-          # 设置Go模块代理（加速依赖下载）
-          echo "GOPROXY=https://goproxy.cn,direct" >> $GITHUB_ENV
-          # 官方要求的CGO配置
-          echo "CGO_CFLAGS=-I/usr/include -I$(go env GOPATH)/deps/cowsql/include -I$(go env GOPATH)/deps/raft/include" >> $GITHUB_ENV
-          echo "CGO_LDFLAGS=-L/usr/lib -L$(go env GOPATH)/deps/cowsql/.libs -L$(go env GOPATH)/deps/raft/.libs -lintl" >> $GITHUB_ENV
-          echo "LD_LIBRARY_PATH=/usr/lib:$(go env GOPATH)/deps/cowsql/.libs:$(go env GOPATH)/deps/raft/.libs" >> $GITHUB_ENV
-          echo "CGO_LDFLAGS_ALLOW=(-Wl,-wrap,pthread_create)|(-Wl,-z,now)" >> $GITHUB_ENV
+          # 官方要求的CGO环境变量
+          export CGO_CFLAGS="-I/usr/include -I$(go env GOPATH)/deps/cowsql/include -I$(go env GOPATH)/deps/raft/include"
+          export CGO_LDFLAGS="-L/usr/lib -L$(go env GOPATH)/deps/cowsql/.libs -L$(go env GOPATH)/deps/raft/.libs -lintl"
+          export LD_LIBRARY_PATH="/usr/lib:$(go env GOPATH)/deps/cowsql/.libs:$(go env GOPATH)/deps/raft/.libs"
+          export CGO_LDFLAGS_ALLOW="(-Wl,-wrap,pthread_create)|(-Wl,-z,now)"
+          # 写入环境变量供后续步骤使用
+          echo "CGO_CFLAGS=${CGO_CFLAGS}" >> $GITHUB_ENV
+          echo "CGO_LDFLAGS=${CGO_LDFLAGS}" >> $GITHUB_ENV
+          echo "LD_LIBRARY_PATH=${LD_LIBRARY_PATH}" >> $GITHUB_ENV
+          echo "CGO_LDFLAGS_ALLOW=${CGO_LDFLAGS_ALLOW}" >> $GITHUB_ENV
 
-      - name: Build cowsql/raft dependencies (官方流程)
-        run: |
-          make deps
+      - name: Build dependencies (make deps)
+        run: make deps
 
-      - name: Compile Incus (官方make流程)
-        run: |
-          make
+      - name: Compile Incus
+        run: make
 
-      - name: Verify compiled binaries
+      - name: Validate build output
         run: |
           # 检查二进制文件是否生成
-          ls -l bin/incus bin/incusd bin/incus-agent
-          # 验证二进制文件可执行
+          if [ ! -f bin/incus ] || [ ! -f bin/incusd ] || [ ! -f bin/incus-agent ]; then
+            echo "Compilation failed: binaries missing!"
+            ls -l bin/ || true
+            exit 1
+          fi
+          # 验证版本
           bin/incus --version || true
-          bin/incusd --version || true
 
-      - name: Upload build artifacts
+      - name: Upload artifacts
         uses: actions/upload-artifact@v5
         with:
           name: incus-alpine-edge-${{ github.sha }}
@@ -80,4 +98,4 @@ jobs:
             bin/incus
             bin/incusd
             bin/incus-agent
-          retention-days: 14  # 延长产物保存时间
+          retention-days: 14
