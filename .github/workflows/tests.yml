@@ -47,7 +47,7 @@ jobs:
       - name: Install runtime dependencies
         run: |
           apk add --no-cache \
-            acl attr ca-certificates cgmanager dbus dnsmasq lxc libintl \
+            acl attr ca-certificates dbus dnsmasq lxc libintl \
             iproute2 iptables netcat-openbsd rsync squashfs-tools shadow-uidmap \
             tar xz
 
