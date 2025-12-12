@@ -17,11 +17,10 @@ jobs:
       PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
     steps:
-      # 1. 基础环境准备（单行写全依赖，避免换行解析错误）
-      - name: Install dependencies (Alpine official)
+      # 1. 安装所有依赖（含git）
+      - name: Install all build dependencies
         run: |
-          # 核心修复：所有依赖写在同一行，避免Shell换行解析问题
-          apk update --no-cache && apk add --no-cache acl-dev autoconf automake eudev-dev gettext-dev go intltool libcap-dev libtool libuv-dev linux-headers lz4-dev tcl-dev sqlite-dev lxc-dev make xz gcc musl-dev pkgconfig
+          apk update --no-cache && apk add --no-cache git acl-dev autoconf automake eudev-dev gettext-dev go intltool libcap-dev libtool libuv-dev linux-headers lz4-dev tcl-dev sqlite-dev lxc-dev make xz gcc musl-dev pkgconfig
 
       # 2. 拉取源码
       - name: Checkout code
