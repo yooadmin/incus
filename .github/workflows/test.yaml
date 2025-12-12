@@ -30,18 +30,13 @@ jobs:
           apk update
           # 安装核心依赖（分模块，便于维护）
           apk add --no-cache \
-            # 基础工具链
             git make gcc musl-dev pkgconf bash libc6-compat \
-            # Gettext/libintl（解决链接错误核心）
             gettext gettext-dev libintl \
-            # Incus编译依赖（文档指定）
             acl-dev autoconf automake eudev-dev go intltool libcap-dev \
             libtool libuv-dev linux-headers lz4-dev tcl-dev sqlite-dev lxc-dev xz \
-            # 系统测试依赖
             apparmor btrfs-progs busybox-static dbus dnsmasq iproute2 iptables \
             libseccomp-dev lvm2 nftables rsync squashfs-tools shadow-uidmap \
             tar util-linux-misc zfs \
-            # 静态分析工具
             shellcheck py3-pip && pip install codespell flake8
 
       # Step 2: 检出代码（完整历史）
