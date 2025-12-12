@@ -48,14 +48,14 @@ jobs:
         run: |
           apk add --no-cache \
             acl attr ca-certificates dbus dnsmasq lxc libintl \
-            iproute2 iptables netcat-openbsd rsync squashfs-tools shadow-uidmap \
+            iproute2 iptables netcat-openbsd rsync squashfs-tools shadow-uidmap git \
             tar xz
 
       - name: Install VM dependencies (if needed)
         run: |
           apk add --no-cache \
             qemu-system-x86_64 qemu-chardev-spice qemu-hw-usb-redirect \
-            qemu-hw-display-virtio-vga qemu-img qemu-ui-spice-core ovmf \
+            qemu-hw-display-virtio-vga qemu-img qemu-ui-spice-core ovmf git \
             sgdisk util-linux-misc virtiofsd
 
       - name: Fix Go environment
