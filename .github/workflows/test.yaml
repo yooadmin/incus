@@ -32,7 +32,7 @@ jobs:
           apk add --no-cache \
             git make gcc musl-dev pkgconf bash libc6-compat \
             gettext gettext-dev libintl \
-            acl-dev autoconf automake eudev-dev go intltool libcap-dev \
+            acl-dev autoconf automake eudev-dev go intltool libcap-dev curl \
             libtool libuv-dev linux-headers lz4-dev tcl-dev sqlite-dev lxc-dev xz \
             apparmor btrfs-progs busybox-static dbus dnsmasq iproute2 iptables \
             libseccomp-dev lvm2 nftables rsync squashfs-tools shadow-uidmap \
