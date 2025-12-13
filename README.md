@@ -1,5 +1,3 @@
 # Incus
 
-## Contributing
-
-Fixes and new features are greatly appreciated. Make sure to read our [contributing guidelines](CONTRIBUTING.md) first!
+alpine 自动化编译
